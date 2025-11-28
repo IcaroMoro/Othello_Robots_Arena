@@ -1,0 +1,8 @@
+fastapi==0.121.3
+numpy
+pmr_elirobots_sdk==0.0.1
+pydantic==2.12.4
+Requests==2.32.5
+uvicorn==0.38.0
+opencv-python
+request==2.5.0
