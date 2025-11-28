@@ -28,10 +28,6 @@ def calibrar_tabuleiro(p_origem, p_eixo_x, p_eixo_y):
     i_target = 7.0
     j_target = 7.0
     
-    # Fórmulas de Rotação e Translação:
-    # X = x0 + (i * S * cos(th)) - (j * S * sin(th))
-    # Y = y0 + (i * S * sin(th)) + (j * S * cos(th))
-    
     x_h8 = x0 + (i_target * tamanho_casa_calc * math.cos(angulo_rad)) - (j_target * tamanho_casa_calc * math.sin(angulo_rad))
     y_h8 = y0 + (i_target * tamanho_casa_calc * math.sin(angulo_rad)) + (j_target * tamanho_casa_calc * math.cos(angulo_rad))
 
