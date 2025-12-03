@@ -93,6 +93,7 @@ def get_pose_from_estojo(rid: int, z_height: float, num_pecas_ja_usadas: int) ->
     return {"x": x_final,"y": y_final,"z": z_height,"rx": ori[0],"ry": ori[1],"rz": ori[2]}
 
 def get_target_side(rid: int, i_phys: int, j_phys: int) -> str:
+    cfg = ROBOT_CONFIGS[rid]
     if i_phys == -1 and j_phys == -1: return 'estojo'
     if rid == 1: return 'esq' if j_phys <= 3 else 'dir'
     elif rid == 2: return 'dir' if j_phys <= 3 else 'esq'
@@ -253,40 +254,38 @@ def _exec_move_relative_sync(ec: EC, deltas: list, speed: int, accel: int) -> bo
     return _exec_move_joint_sync(ec, ik_resp.result, speed, accel)
 
 def _handle_safe_transition(ec: EC, rid: int, target_side: str) -> bool:
-    """
-    Função helper para mover para staging se estiver cruzando quadrantes.
-    Usa STAGING_ESQ ou STAGING_DIR dependendo do alvo.
-    'estojo' agora é tratado como lado ESQUERDO.
-    """
     global robot_states
     current_side = robot_states[rid]['side']
-    
-    # 1. Se veio do Home Físico, assume que já está seguro para descer direto
+    cfg = ROBOT_CONFIGS[rid]
+
+    # Se veio do Home, assume que é seguro
     if current_side == 'home': 
         robot_states[rid]['side'] = target_side
         return False 
-    
-    # 2. Se já está no lado certo, não faz nada
-    if current_side == target_side:
-        return False
 
-    print(f"↷ [R{rid}][Transição] {current_side} → {target_side}")
+    # Otimização: Se já está no lado certo E não envolve o estojo, pode pular.
+    # (Sempre forçamos staging se envolver estojo para garantir altura)
+    if current_side == target_side and current_side != 'estojo' and target_side != 'estojo':
+        return False
     
-    # Pega a configuração específica deste robô (para ler os stagings dele)
-    cfg = ROBOT_CONFIGS[rid]
+    print(f"↷ [R{rid}][Transição] {current_side} → {target_side}")
     
     # --- LÓGICA DE SELEÇÃO ---
     if target_side == 'dir':
-        # Se vai para a direita, usa Staging DIR
-        juntas_staging_list = list(cfg['STAGING_DIR'])
+        # Vai para Direita
+        juntas_alvo = list(cfg['STAGING_DIR'])
         print(f"[R{rid}] Usando Staging DIREITA")
+        
+    elif target_side == 'esq' or target_side == 'estojo':
+        # MUDANÇA AQUI: Se for Esquerda OU Estojo -> Usa Staging ESQ (Retraído)
+        juntas_alvo = list(cfg['STAGING_ESQ'])
+        print(f"[R{rid}] Usando Staging ESQUERDA (Para Alvo: {target_side})")
+    
     else:
-        # Se vai para 'esq' OU 'estojo', usa Staging ESQ
-        juntas_staging_list = list(cfg['STAGING_ESQ'])
-        print(f"[R{rid}] Usando Staging ESQUERDA (Alvo: {target_side})")
+        # Fallback (não deve acontecer)
+        juntas_alvo = list(cfg['STAGING_ESQ'])
     
-    _exec_move_joint_sync(ec, juntas_staging_list, STAGING_SPEED, ACCEL_PTP)
-    
+    _exec_move_joint_sync(ec, juntas_alvo, STAGING_SPEED, ACCEL_PTP)
     robot_states[rid]['side'] = target_side
     return True
 
@@ -321,6 +320,9 @@ def _macro_virar_na_casa_sync(ec: EC, rid: int, speed: int, accel: int):
     z_op = cfg["Z_OPERATION"]
     z_travel = cfg["Z_TRAVEL"]
     io_garra = robots[rid].io_garra
+    Z_FLIP_ASCEND_DELTA = cfg["Z_FLIP_ASCEND_DELTA"]
+    Z_FLIP_DESCEND_DELTA = cfg["Z_FLIP_DESCEND_DELTA"]
+    Z_FLIP_RETRACT_DELTA = cfg["Z_FLIP_RETRACT_DELTA"]
     print(f"[BRIDGE][MACRO] R{rid} Exec: Virar Peça")
     if not _exec_move_relative_sync(ec, [0,0, -(z_travel - z_op), 0,0,0], speed, accel): return
     ec.set_digital_io(io_garra, 1); time.sleep(0.1)
@@ -938,10 +940,12 @@ def move_joints(body: Joints, rid: int = Query(..., ge=1, le=2)):
     ec = ensure_robot(rid); slot = robots[rid]
     cmd = [body.j1, body.j2, body.j3, body.j4, body.j5, body.j6, 0, 0]
     check_other_robot_is_stopped(rid)
-    print(f"[BRIDGE] Movendo Robô {rid} para juntas: {cmd[:6]} @ {body.speed}%")
+    safe_speed = min(body.speed, SPEED_PTP)
+    safe_accel = min(body.accel, ACCEL_PTP)
+    print(f"[BRIDGE] Movendo Robô {rid} para juntas: {cmd[:6]} @ {safe_speed}%")
     with slot.command_lock:
         try:
-            resp = ec.move_joint(target_joint=cmd, speed=body.speed, acc=body.accel, dec=body.accel, block=True)
+            resp = ec.move_joint(target_joint=cmd, speed=safe_speed, acc=safe_accel, dec=safe_accel, block=True)
             print(f"[BRIDGE] Mov Juntas Robô {rid} concluído. SDK: {resp}"); 
             return {"ok": resp.success, "result": resp.result}
         except Exception as e: 
@@ -953,10 +957,12 @@ def move_pose(body: Pose, rid: int = Query(..., ge=1, le=2)):
     ec = ensure_robot(rid); slot = robots[rid]
     target_p = [body.x, body.y, body.z, body.rx, body.ry, body.rz]
     check_other_robot_is_stopped(rid)
-    print(f"[BRIDGE] Movendo Robô {rid} para pose (PTP): {target_p} @ {body.speed}%")
+    safe_speed = min(body.speed, SPEED_PTP)
+    safe_accel = min(body.accel, ACCEL_PTP)
+    print(f"[BRIDGE] Movendo Robô {rid} para pose (PTP): {target_p} @ {safe_speed}%")
     with slot.command_lock:
         try:
-            if not _exec_move_ptp_sync(ec, body.dict(), body.speed, body.accel):
+            if not _exec_move_ptp_sync(ec, body.dict(), safe_speed, safe_accel):
                 raise RuntimeError("Falha no helper _exec_move_ptp_sync")
             print(f"[BRIDGE] Mov Pose (PTP) Robô {rid} concluído."); 
             return {"ok": True, "result": "Movimento PTP concluído."}
@@ -968,10 +974,12 @@ def move_pose(body: Pose, rid: int = Query(..., ge=1, le=2)):
 def move_line(body: LinePose, rid: int = Query(..., ge=1, le=2)):
     ec = ensure_robot(rid); slot = robots[rid]
     check_other_robot_is_stopped(rid)
-    print(f"[BRIDGE] Movendo Robô {rid} para pose (LIN): {[body.x, body.y, body.z]} @ {body.speed} mm/s")
+    safe_speed = min(body.speed, SPEED_LINEAR)
+    safe_accel = min(body.accel, ACCEL_LINEAR)
+    print(f"[BRIDGE] Movendo Robô {rid} para pose (LIN): {[body.x, body.y, body.z]} @ {safe_speed} mm/s")
     with slot.command_lock:
         try:
-            if not _exec_move_line_sync(ec, body.dict(), body.speed, body.accel):
+            if not _exec_move_line_sync(ec, body.dict(), safe_speed, safe_accel):
                  raise RuntimeError("Falha no helper _exec_move_line_sync")
             print(f"[BRIDGE] Mov Pose (LIN) Robô {rid} concluído."); 
             return {"ok": True, "result": "Movimento LIN concluído."}
@@ -1004,10 +1012,12 @@ def move_relative(body: RelativeMove, rid: int = Query(..., ge=1, le=2)):
     ec = ensure_robot(rid); slot = robots[rid]
     deltas = [body.dx, body.dy, body.dz, body.drx, body.dry, body.drz]
     check_other_robot_is_stopped(rid)
-    print(f"[BRIDGE] Movendo Robô {rid} relativamente: {deltas} @ {body.speed}%")
+    safe_speed = min(body.speed, SPEED_PTP)
+    safe_accel = min(body.accel, ACCEL_PTP)
+    print(f"[BRIDGE] Movendo Robô {rid} relativamente: {deltas} @ {safe_speed}%")
     with slot.command_lock:
         try:
-            if not _exec_move_relative_sync(ec, deltas, body.speed, body.accel):
+            if not _exec_move_relative_sync(ec, deltas, safe_speed, safe_accel):
                 raise RuntimeError("Falha no helper _exec_move_relative_sync")
             print(f"[BRIDGE] Mov Relativo Robô {rid} concluído."); 
             return {"ok": True, "result": "Movimento Relativo concluído."}
@@ -1019,7 +1029,9 @@ def move_relative(body: RelativeMove, rid: int = Query(..., ge=1, le=2)):
 def rotate_gripper_endpoint(body: RotateGripper, rid: int = Query(..., ge=1, le=2)):
     ec = ensure_robot(rid); slot = robots[rid]; angle_deg = body.angle
     check_other_robot_is_stopped(rid)
-    print(f"[BRIDGE] Girando garra (J6) Robô {rid} por {angle_deg} graus @ {body.speed}%")
+    safe_speed = min(body.speed, SPEED_PTP)
+    safe_accel = min(body.accel, ACCEL_PTP)
+    print(f"[BRIDGE] Girando garra (J6) Robô {rid} por {angle_deg} graus @ {safe_speed}%")
     with slot.command_lock:
         try:
             current_j_resp = ec.get_joint()
@@ -1034,7 +1046,7 @@ def rotate_gripper_endpoint(body: RotateGripper, rid: int = Query(..., ge=1, le=
             print(f"[BRIDGE] J6 atual: {current_angle_j6:.2f}, Alvo bruto: {target_angle_raw:.2f}, Alvo normalizado: {target_angle_normalized:.2f}")
             cmd = target_j + [0] * (8 - len(target_j))
             print(f"[BRIDGE] Juntas alvo rotação Robô {rid}: {cmd[:6]}. Enviando mov...")
-            move_resp = ec.move_joint(target_joint=cmd, speed=body.speed, acc=body.accel, dec=body.accel, block=True)
+            move_resp = ec.move_joint(target_joint=cmd, speed=safe_speed, acc=safe_accel, dec=safe_accel, block=True)
             print(f"[BRIDGE] Rotação garra Robô {rid} concluída. SDK: {move_resp}")
             return {"ok": move_resp.success, "result": move_resp.result}
         except Exception as e: 
@@ -1056,10 +1068,11 @@ def macro_pegar_estojo(
     """
     ec = ensure_robot(rid); slot = robots[rid]
     check_other_robot_is_stopped(rid)
-    
+    safe_s = min(body.speed_ptp, SPEED_PTP)
+    safe_a = min(body.accel_ptp, ACCEL_PTP)
     with slot.command_lock:
         print(f"[BRIDGE][MACRO] R{rid} Exec: Pegar Peça (Macro Burra)")
-        _macro_pegar_no_estojo_sync(ec, rid, 0, body.speed, body.accel)
+        _macro_pegar_no_estojo_sync(ec, rid, 0, safe_s, safe_a)
         print(f"[BRIDGE][MACRO] R{rid} Fim: Pegar Peça (Macro Burra)")
         
     return {"ok": True, "message": f"R{rid} - Macro Pega Estojo concluída."}
@@ -1073,9 +1086,11 @@ def macro_colocar_casa(
     """Executa apenas a macro de colocar (descer, abrir, subir)."""
     ec = ensure_robot(rid); slot = robots[rid]
     check_other_robot_is_stopped(rid)
+    safe_s = min(body.speed_ptp, SPEED_PTP)
+    safe_a = min(body.accel_ptp, ACCEL_PTP)
     
     with slot.command_lock:
-        _macro_colocar_na_casa_sync(ec, rid, body.speed, body.accel)
+        _macro_colocar_na_casa_sync(ec, rid, safe_s, safe_a)
         
     return {"ok": True, "message": f"R{rid} - Macro Colocar Casa concluída."}
 
@@ -1088,9 +1103,11 @@ def macro_virar_casa(
     """Executa apenas a macro de virar peça (descer, fechar, subir, girar, ...)."""
     ec = ensure_robot(rid); slot = robots[rid]
     check_other_robot_is_stopped(rid)
+    safe_s = min(body.speed_ptp, SPEED_PTP)
+    safe_a = min(body.accel_ptp, ACCEL_PTP)
     
     with slot.command_lock:
-        _macro_virar_na_casa_sync(ec, rid, body.speed, body.accel)
+        _macro_virar_na_casa_sync(ec, rid, safe_s, safe_a)
 
     return {"ok": True, "message": f"R{rid} - Macro Virar Casa concluída."}
 
@@ -1120,10 +1137,10 @@ def macro_executar_lance_completo(
     
     # Pega os parâmetros do payload
     i_log, j_log = body.jogada
-    speed_ptp = body.speed_ptp
-    speed_lin = body.speed_linear
-    accel_ptp = body.accel_ptp
-    accel_lin = body.accel_linear
+    run_s_ptp = min(body.speed_ptp, SPEED_PTP)
+    run_s_lin = min(body.speed_linear, SPEED_LINEAR)
+    run_a_ptp = min(body.accel_ptp, ACCEL_PTP)
+    run_a_lin = min(body.accel_linear, ACCEL_LINEAR)
     num_peca_atual = body.num_peca_atual
     capturas_por_direcao = body.capturas_por_direcao
     
@@ -1141,11 +1158,11 @@ def macro_executar_lance_completo(
             _ = _handle_safe_transition(ec, rid, target_side)
             
             pose_aprox_estojo = get_pose_from_estojo(rid, z_travel_estojo, num_peca_atual)
-            print(f"[R{rid}] Aproximação Estojo (PTP) @ {speed_ptp}% (Peça {num_peca_atual})")
-            if not _exec_move_ptp_sync(ec, pose_aprox_estojo, speed_ptp, accel_ptp):
+            print(f"[R{rid}] Aproximação Estojo (PTP) @ {run_s_ptp}% (Peça {num_peca_atual})")
+            if not _exec_move_ptp_sync(ec, pose_aprox_estojo, run_s_ptp, run_a_ptp):
                 raise RuntimeError("Falha ao mover para aproximação do estojo")
                 
-            _macro_pegar_no_estojo_sync(ec, rid, num_peca_atual, speed_ptp, accel_ptp)
+            _macro_pegar_no_estojo_sync(ec, rid, num_peca_atual, run_s_ptp, run_a_ptp)
             print(f"[R{rid}] Saindo do Estojo. Forçando transição via Staging.")
             robot_states[rid]['side'] = "estojo"
 
@@ -1157,13 +1174,13 @@ def macro_executar_lance_completo(
             
             pose_aprox_colocar = get_pose_from_grid(rid, i_phys, j_phys, z_travel)
             if did_transition:
-                if not _exec_move_ptp_sync(ec, pose_aprox_colocar, speed_ptp, accel_ptp):
+                if not _exec_move_ptp_sync(ec, pose_aprox_colocar, run_s_ptp, run_a_ptp):
                     raise RuntimeError("Falha ao mover (PTP) para aproximação de colocação")
             else:
-                if not _exec_move_line_sync(ec, pose_aprox_colocar, speed_lin, accel_lin):
+                if not _exec_move_line_sync(ec, pose_aprox_colocar, run_s_lin, run_a_lin):
                      raise RuntimeError("Falha ao mover (LIN) para aproximação de colocação")
                      
-            _macro_colocar_na_casa_sync(ec, rid, speed_ptp, accel_ptp)
+            _macro_colocar_na_casa_sync(ec, rid, run_s_ptp, run_a_ptp)
 
             # --- 4. VIRAR PEÇAS CAPTURADAS ---
             alvos: List[Tuple[int, int]] = []
@@ -1207,13 +1224,13 @@ def macro_executar_lance_completo(
                     pose_aprox_flip = get_pose_from_grid(rid, pi_phys, pj_phys, z_travel)
                     
                     if did_transition:
-                        if not _exec_move_ptp_sync(ec, pose_aprox_flip, speed_ptp, accel_ptp):
+                        if not _exec_move_ptp_sync(ec, pose_aprox_flip, run_s_ptp, run_a_ptp):
                             raise RuntimeError(f"Falha ao mover (PTP) para aproximação de flip em {(pi_log, pj_log)}")
                     else:
-                        if not _exec_move_line_sync(ec, pose_aprox_flip, speed_lin, accel_lin):
+                        if not _exec_move_line_sync(ec, pose_aprox_flip, run_s_lin, run_a_lin):
                             raise RuntimeError(f"Falha ao mover (LIN) para aproximação de flip em {(pi_log, pj_log)}")
                             
-                    _macro_virar_na_casa_sync(ec, rid, speed_ptp, accel_ptp)
+                    _macro_virar_na_casa_sync(ec, rid, run_s_ptp, run_a_ptp)
 
                 print(f"[R{rid}] Flips concluídos. Recuando para home {q_atual}.")
 
@@ -1222,7 +1239,7 @@ def macro_executar_lance_completo(
             robot_states[rid]['side'] = 'home' # Define o estado
             
             # Usa as constantes de Home Físico e velocidade de Home
-            if not _exec_move_joint_sync(ec, HOME_POSITION_JOINTS[:6], HOME_SPEED, accel_ptp):
+            if not _exec_move_joint_sync(ec, HOME_POSITION_JOINTS[:6], HOME_SPEED, run_a_ptp):
                 raise RuntimeError("Falha ao retornar para Home Físico")
             
             print(f"--- [R{rid}] SUPER-MACRO LANCE CONCLUÍDA ---")

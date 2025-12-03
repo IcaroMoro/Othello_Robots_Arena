@@ -13,7 +13,7 @@ def start_api_server():
 def start_vision_system():
     """Roda a Visão Computacional"""
     from opencv_module import run_vision_loop
-    run_vision_loop(camera_id=2)
+    run_vision_loop(camera_id=0)
 
 if __name__ == "__main__":
     multiprocessing.set_start_method('spawn', force=True)

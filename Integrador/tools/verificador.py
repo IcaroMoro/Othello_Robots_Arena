@@ -108,7 +108,7 @@ def move_to_home():
     
     cfg = get_current_config()
     
-    if not move_joints_cmd(cfg["STAGING_ESQ"], speed=STAGING_SPEED): return False
+    if not move_joints_cmd(cfg["STAGING_DIR"], speed=STAGING_SPEED): return False
     
     r = http_post("/home")
     if r.get("ok"): 
@@ -125,7 +125,7 @@ def habilitar_servos():
 # =================================================================
 
 def get_target_side(j: int) -> str:
-    return 'esq' if j <= 3 else 'dir'
+    return 'dir' if j <= 3 else 'esq'
 
 def get_pose_from_grid(i: int, j: int, z_height: float):
     cfg = get_current_config()
@@ -196,6 +196,8 @@ def handle_safe_transition_cmd(target_side: str) -> bool:
     
     cfg = get_current_config()
     
+    if target_side == 'estojo': target_side = cfg["LADO_ESTOJO"]
+
     # --- LÓGICA DE SELEÇÃO (IGUAL AO BRIDGE) ---
     if target_side == 'dir':
 
