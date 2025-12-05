@@ -23,13 +23,13 @@ ROBOT2_IP = os.getenv("ROBOT2_IP", "192.168.1.202")
 # =================================================================
 
 # --- VELOCIDADES (Nomes alinhados com bridge_server.py) ---
-SPEED_PTP = 60          
-SPEED_LINEAR = 120     
-STAGING_SPEED = 60   
+SPEED_PTP = 40          
+SPEED_LINEAR = 60     
+STAGING_SPEED = 40   
 
 # --- ACELERAÇÕES ---
-ACCEL_PTP = 60        
-ACCEL_LINEAR = 60      
+ACCEL_PTP = 30        
+ACCEL_LINEAR = 30      
 
 # Aliases para compatibilidade com verificador.py (se ele usar os nomes antigos)
 MOVE_SPEED = SPEED_PTP

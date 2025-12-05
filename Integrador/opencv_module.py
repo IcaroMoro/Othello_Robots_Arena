@@ -138,7 +138,7 @@ t_net.daemon = True
 t_net.start()
 
 # --- SETUP DA CÂMERA (Cuidado: ID 2 Fixo como no Hough original) ---
-cap = cv2.VideoCapture(0) 
+cap = cv2.VideoCapture(2) 
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
