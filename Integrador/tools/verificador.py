@@ -108,8 +108,6 @@ def move_to_home():
     
     cfg = get_current_config()
     
-    if not move_joints_cmd(cfg["STAGING_DIR"], speed=STAGING_SPEED): return False
-    
     r = http_post("/home")
     if r.get("ok"): 
         current_operation_side = 'home' 
@@ -120,36 +118,35 @@ def habilitar_servos():
     print("⚡ Habilitando servos...")
     http_post("/habilitar")
 
-# =================================================================
-# --- CÁLCULOS MATEMÁTICOS (Baseados no Config) ---
-# =================================================================
-
 def get_target_side(j: int) -> str:
-    return 'dir' if j <= 3 else 'esq'
+    # Colunas 0,1,2,3 são sempre o lado "base" (RET) do algoritmo
+    return 'ret' if j <= 3 else 'est'
 
 def get_pose_from_grid(i: int, j: int, z_height: float):
     cfg = get_current_config()
     
     x0 = cfg["BOARD_ORIGIN_X"]; y0 = cfg["BOARD_ORIGIN_Y"]
     angle = cfg["BOARD_ANGLE_RAD"]; size = cfg["SQUARE_SIZE_MM"]
-    
     cos_t = math.cos(angle); sin_t = math.sin(angle)
     
-    # Posição
     x_final = x0 + (i * size * cos_t) - (j * size * sin_t)
     y_final = y0 + (i * size * sin_t) + (j * size * cos_t)
     
-    if j <= 3: base_ori = cfg["ORIENTATION_TABULEIRO_ESQ"]
-    else: base_ori = cfg["ORIENTATION_TABULEIRO_DIR"]
+    is_ret = (j <= 3)
     
+    if is_ret:
+        base_ori = cfg["ORIENTATION_TABULEIRO_RET"] 
+        
+        rz_rad = math.atan2(x_final, y_final)
+        final_rz = math.degrees(rz_rad)
+    else:
+        base_ori = cfg["ORIENTATION_TABULEIRO_EST"]
+        
+        rz_rad = math.atan2(x_final, y_final)
+        rz_deg = math.degrees(rz_rad)
+        final_rz = 180.0 - rz_deg 
+
     rx, ry = base_ori[0], base_ori[1]
-    
-    # Orientação Radial (Atan2) para o Tabuleiro
-    rz_rad = math.atan2(x_final, y_final)
-    rz_deg = math.degrees(rz_rad)
-    
-    if j <= 3: final_rz = rz_deg
-    else: final_rz = 180.0 - rz_deg # Flip para o lado longe
     
     return (x_final, y_final, z_height, rx, ry, normalize_angle_deg(final_rz))
 
@@ -168,16 +165,13 @@ def get_pose_from_estojo(num_peca: int, z_height: float):
     cos_t = math.cos(angle)
     sin_t = math.sin(angle)
     
-    # 1. Calcula onde está a casa (7, 0) Lógica
     i_ref, j_ref = 7, 0    
     x_70 = x0 + (i_ref * size * cos_t) - (j_ref * size * sin_t)
     y_70 = y0 + (i_ref * size * sin_t) + (j_ref * size * cos_t)
     
-    # 2. Aplica o Offset do Estojo + Espaçamento da peça N
     dx_local = cfg["ESTOJO_OFFSET_X"]
     dy_local = cfg["ESTOJO_OFFSET_Y"] + (num_peca * cfg["ESTOJO_SPACING_MM"])
     
-    # 3. Rotaciona esse offset pelo ângulo do tabuleiro (Matemática de Transformação Homogênea simplificada)
     x_final = x_70 + (dx_local * cos_t) - (dy_local * sin_t)    
     y_final = y_70 + (dx_local * sin_t) + (dy_local * cos_t)
     
@@ -196,18 +190,17 @@ def handle_safe_transition_cmd(target_side: str) -> bool:
     
     cfg = get_current_config()
     
-    if target_side == 'estojo': target_side = cfg["LADO_ESTOJO"]
+    if target_side == 'estojo': 
+        target_side = cfg["LADO_ESTOJO"] # Pode ser 'ret' ou 'est' no config
 
-    # --- LÓGICA DE SELEÇÃO (IGUAL AO BRIDGE) ---
-    if target_side == 'dir':
+    # O código não quer saber se é esquerda ou direita, só quer a chave certa
+    if target_side == 'ret':
+        juntas = cfg["STAGING_RET"]
+        print(f"   -> Via Staging RETRAÍDO (J1={juntas[0]})")
+    else: # est
+        juntas = cfg["STAGING_EST"]
+        print(f"   -> Via Staging ESTICADO (J1={juntas[0]})")
 
-        juntas = cfg["STAGING_DIR"]
-        print(f"   -> Via Staging DIREITA (J1={juntas[0]})")
-    else:
-        juntas = cfg["STAGING_ESQ"]
-        print(f"   -> Via Staging ESQUERDA (J1={juntas[0]})")
-
-    # Executa o movimento
     if move_joints_cmd(juntas, speed=STAGING_SPEED):
         current_operation_side = target_side
         return True
@@ -216,6 +209,32 @@ def handle_safe_transition_cmd(target_side: str) -> bool:
     return False
 
 # --- MACROS ---
+
+def macro_colocar_cmd(i: int, j: int):
+    global current_operation_side
+    cfg = get_current_config()
+    
+    target = get_target_side(j)
+    handle_safe_transition_cmd(target)
+    
+    z_travel = cfg["Z_TRAVEL"] 
+    z_op = cfg["Z_OPERATION"]
+    ascend = cfg["Z_FLIP_ASCEND_DELTA"]
+    descend = cfg["Z_FLIP_DESCEND_DELTA"]
+    retract = cfg["Z_FLIP_RETRACT_DELTA"]
+
+    print(f"🤖 Colocando peça em ({i}, {j})...")
+
+    # 1. Aproximação
+    pose = get_pose_from_grid(i, j, z_travel)
+    if not move_pose_cmd(*pose, speed=MOVE_SPEED): return False
+    
+    # 2. Desce, Solta, Sobe
+    if not move_relative_cmd(dz=-(z_travel - z_op)): return False
+    if not set_gripper_cmd(True): return False; time.sleep(0.3)
+    if not move_relative_cmd(dz=ascend): return False
+    
+    return True
 
 def macro_trocar_cmd(i: int, j: int):
     global current_operation_side
@@ -285,6 +304,16 @@ def macro_pegar_estojo_cmd(num_peca: int):
     current_operation_side = 'estojo'
     print(f"✅ Peça {num_peca} capturada (está na garra).")
     return True
+
+# --- NOVA MACRO DE TESTE: DANCINHA ---
+def macro_danca_vitoria_cmd():
+    """Chama a macro de dancinha no bridge."""
+    print("🕺 Enviando comando de Dancinha da Vitória...")
+    r = http_post("/macro/vitoria")
+    if r.get("ok"):
+        print("✅ Dancinha executada com sucesso!")
+    else:
+        print(f"❌ Falha na dancinha: {r.get('error', 'Erro desconhecido')}")
 
 # --- ROTINA DE VERIFICAÇÃO COMPLETA ---
 def executar_rotina_verificacao():
@@ -356,6 +385,13 @@ def main():
             
             elif cmd[0] == "trocar" and len(cmd)==3:
                 macro_trocar_cmd(int(cmd[1]), int(cmd[2]))
+
+            elif cmd[0] == "colocar" and len(cmd)==3:
+                macro_colocar_cmd(int(cmd[1]), int(cmd[2]))
+
+            # --- COMANDO DANCINHA ---
+            elif cmd[0] == "dancar":
+                macro_danca_vitoria_cmd()
             
             elif cmd[0] in ["sair", "exit"]: break
             else: print("Comandos: verificar, habilitar, usar 1|2, home, garra, ungarra, trocar i j, pegar N")

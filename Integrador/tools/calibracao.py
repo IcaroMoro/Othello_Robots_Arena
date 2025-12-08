@@ -40,10 +40,10 @@ def calibrar_tabuleiro(p_origem, p_eixo_x, p_eixo_y):
 # --- EXEMPLO DE USO (Substitua pelos valores que você ler no teach pendant) ---
 # Exemplo Robô 1:
 # Leve o robô na A1 (0,0) e anote X,Y
-p1 = (-176.596, 207.240)
+p1 = (-203.231, 189.298)
 # Leve o robô na H1 (7,0) e anote X,Y
-p2 = (174.167, 198.468) 
+p2 = (143.186, 219.210) 
 # Leve o robô na A8 (0,7) (opcional, para validar ortogonalidade)
-p3 = (-168.867, 557.257) 
+p3 = (-232.498, 538.794) 
 
 calibrar_tabuleiro(p1, p2, p3)

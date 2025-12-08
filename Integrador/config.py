@@ -23,17 +23,20 @@ ROBOT2_IP = os.getenv("ROBOT2_IP", "192.168.1.202")
 # =================================================================
 
 # --- VELOCIDADES (Nomes alinhados com bridge_server.py) ---
-SPEED_PTP = 40          
-SPEED_LINEAR = 60     
-STAGING_SPEED = 40   
+SPEED_PTP = 80          
+SPEED_LINEAR = 160     
+STAGING_SPEED = 80   
 
 # --- ACELERAÇÕES ---
-ACCEL_PTP = 30        
-ACCEL_LINEAR = 30      
+ACCEL_PTP = 80        
+ACCEL_LINEAR = 80      
 
 # Aliases para compatibilidade com verificador.py (se ele usar os nomes antigos)
 MOVE_SPEED = SPEED_PTP
 MOVE_SPEED_LINEAR = SPEED_LINEAR
+
+HOME_SPEED_ = 80
+HOME_POSITION = [90.0, -155.0, 100.0, -35.0, 90.0, 90.0, 0.0, 0.0]
 
 # =================================================================
 # --- CALIBRAÇÃO DOS ROBÔS ---
@@ -41,21 +44,25 @@ MOVE_SPEED_LINEAR = SPEED_LINEAR
 
 # --- ROBÔ 1 (PRETAS) ---
 CFG_R1 = {
-    "BOARD_ORIGIN_X": -203.653,
-    "BOARD_ORIGIN_Y": 189.311,
-    "BOARD_ANGLE_RAD": 0.08551212,
+    # "BOARD_ORIGIN_X": -203.653,
+    # "BOARD_ORIGIN_Y": 189.311,
+    # "BOARD_ANGLE_RAD": 0.08551212,
+    # "SQUARE_SIZE_MM": 49.9035,
+    "BOARD_ORIGIN_X": -203.2310,
+    "BOARD_ORIGIN_Y": 189.2980,
+    "BOARD_ANGLE_RAD": 0.08613316,
     "SQUARE_SIZE_MM": 49.9035,
     
     "ESTOJO_OFFSET_X": 74.0,
-    "ESTOJO_OFFSET_Y": -150.0,
-    "ESTOJO_SPACING_MM": 12.6,
+    "ESTOJO_OFFSET_Y": -150.0+12.5,
+    "ESTOJO_SPACING_MM": 12.5,
     
     "ORIENTATION_ESTOJO": (180.0, 0.1, math.degrees(0.06082656)), 
-    "ORIENTATION_TABULEIRO_ESQ": (115.0, 1.0, 0.0),
-    "ORIENTATION_TABULEIRO_DIR": (115.0, -1.0, 0.0),
+    "ORIENTATION_TABULEIRO_RET": (115.0, 0.1, 0.0),
+    "ORIENTATION_TABULEIRO_EST": (115.0, -0.1, 180.0),
     
-    "Z_OPERATION": 10.5,
-    "Z_OPERATION_ESTOJO": 23.0,
+    "Z_OPERATION": 13,
+    "Z_OPERATION_ESTOJO": 26.7,
     "Z_APPROACH_MARGIN": 40.0, 
     
     "Z_FLIP_ASCEND_DELTA": 60.0,
@@ -65,9 +72,9 @@ CFG_R1 = {
     "Z_TRAVEL": 12.5 + 60.0,
     "Z_TRAVEL_ESTOJO": 23.0 + 60.0,
 
-    "LADO_ESTOJO": "esq",
-    "STAGING_ESQ": [70.0, -105.0, 110.0, -95.0, 90.0, -20.0],
-    "STAGING_DIR": [70.0, -70.0, 70.0, 30.0, 250.0, 170.0]
+    "LADO_ESTOJO": "ret",
+    "STAGING_RET": [70.0, -105.0, 110.0, -95.0, 90.0, 70.0],
+    "STAGING_EST": [70.0, -70.0, 70.0, 30.0, 250.0, 85.0]
 }
 
 # --- ROBÔ 2 (BRANCAS) ---
@@ -82,8 +89,8 @@ CFG_R2 = {
     "ESTOJO_SPACING_MM": 12.6,
     
     "ORIENTATION_ESTOJO": (180.0, 0.1, math.degrees(-0.02876740)),
-    "ORIENTATION_TABULEIRO_ESQ": (115.0, 0.1, 0.0),
-    "ORIENTATION_TABULEIRO_DIR": (115.0, -0.1, 180.0),
+    "ORIENTATION_TABULEIRO_RET": (115.0, 0.1, 0.0),
+    "ORIENTATION_TABULEIRO_EST": (115.0, -0.1, 180.0),
     
     "Z_OPERATION": 11.0,
     "Z_OPERATION_ESTOJO": 27.0,
@@ -96,9 +103,9 @@ CFG_R2 = {
     "Z_TRAVEL": 14.0 + 60.0,
     "Z_TRAVEL_ESTOJO": 27.0 + 60.0,
 
-    "LADO_ESTOJO": "dir",
-    "STAGING_ESQ": [70.0, -70.0, 70.0, 30.0, 250.0, 170.0],
-    "STAGING_DIR": [70.0, -105.0, 110.0, -95.0, 90.0, -20.0]
+    "LADO_ESTOJO": "ret",
+    "STAGING_EST": [70.0, -70.0, 70.0, 30.0, 250.0, 85.0],
+    "STAGING_RET": [70.0, -105.0, 110.0, -95.0, 90.0, 70.0]
 }
 
 ROBOT_CONFIGS = {1: CFG_R1, 2: CFG_R2}

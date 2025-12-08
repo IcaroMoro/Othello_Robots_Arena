@@ -14,7 +14,7 @@ try:
     from config import (
         ROBOT1_IP, ROBOT2_IP, BRIDGE_TOKEN,
         SPEED_PTP, SPEED_LINEAR, ACCEL_PTP, ACCEL_LINEAR,
-        STAGING_SPEED, ROBOT_CONFIGS
+        STAGING_SPEED, ROBOT_CONFIGS, HOME_SPEED_, HOME_POSITION
     )
 except ImportError:
     raise ImportError("Arquivo config.py não encontrado na raiz do projeto!")
@@ -28,10 +28,10 @@ except Exception:
         raise ImportError("Não foi possível importar 'EC' nem de 'pmr_elirobots_sdk' nem de 'eliterobot'")
 
 # --- CONFIGURAÇÕES LOCAIS (Ainda não movidas para config.py) ---
-DIGITAL_GARRA1 = os.getenv("DIGITAL_GARRA1", "Y0")
+DIGITAL_GARRA1 = os.getenv("DIGITAL_GARRA1", "Y48")
 DIGITAL_GARRA2 = os.getenv("DIGITAL_GARRA2", "Y0")
-HOME_POSITION_JOINTS = [90.0, -155.0, 100.0, -35.0, 90.0, 0.0, 0.0, 0.0]
-HOME_SPEED = 80
+HOME_POSITION_JOINTS = HOME_POSITION
+HOME_SPEED = HOME_SPEED_
 
 # --- FILTRO DE LOGS ---
 class EndpointFilter(logging.Filter):
@@ -65,13 +65,21 @@ def get_pose_from_grid(rid: int, i_phys: int, j_phys: int, z_height: float) -> D
     sin_theta = math.sin(angle)    
     x_final_robo = x0 + (i_phys * size * cos_theta) - (j_phys * size * sin_theta)    
     y_final_robo = y0 + (i_phys * size * sin_theta) + (j_phys * size * cos_theta)
-    if j_phys <= 3: base_orientation = cfg["ORIENTATION_TABULEIRO_ESQ"]
-    else: base_orientation = cfg["ORIENTATION_TABULEIRO_DIR"]
+    # Lógica RET/EST
+    is_ret = (j_phys <= 3)
+    if is_ret:
+        base_orientation = cfg["ORIENTATION_TABULEIRO_RET"]
+        rz_rad = math.atan2(x_final_robo, y_final_robo)
+        rz_deg = math.degrees(rz_rad)
+        final_rz_deg = rz_deg # Lado perto geralmente alinha direto
+    else:
+        base_orientation = cfg["ORIENTATION_TABULEIRO_EST"]
+        rz_rad = math.atan2(x_final_robo, y_final_robo)
+        rz_deg = math.degrees(rz_rad)
+        final_rz_deg = 180.0 - rz_deg # Lado longe geralmente precisa de flip
     tool_rx, tool_ry = base_orientation[0], base_orientation[1]
-    rz_rad = math.atan2(x_final_robo, y_final_robo); rz_deg = math.degrees(rz_rad)
-    if j_phys <= 3: final_rz_deg = rz_deg
-    else: final_rz_deg = 180.0 - rz_deg
     rz_normalizado = normalize_angle_deg(final_rz_deg)
+    
     return {"x": x_final_robo, "y": y_final_robo, "z": z_height, "rx": tool_rx, "ry": tool_ry, "rz": rz_normalizado}
 
 def get_pose_from_estojo(rid: int, z_height: float, num_pecas_ja_usadas: int) -> Dict[str, float]:
@@ -95,10 +103,7 @@ def get_pose_from_estojo(rid: int, z_height: float, num_pecas_ja_usadas: int) ->
 def get_target_side(rid: int, i_phys: int, j_phys: int) -> str:
     cfg = ROBOT_CONFIGS[rid]
     if i_phys == -1 and j_phys == -1: return 'estojo'
-    if rid == 1: return 'esq' if j_phys <= 3 else 'dir'
-    elif rid == 2: return 'dir' if j_phys <= 3 else 'esq'
-    raise ValueError(f"RID inválido para get_target_side: {rid}")
-
+    return 'ret' if j_phys <= 3 else 'est'
 
 # === LÓGICA DE CONEXÃO E LOCKS (Original do bridge.py) ===
 
@@ -262,28 +267,27 @@ def _handle_safe_transition(ec: EC, rid: int, target_side: str) -> bool:
     if current_side == 'home': 
         robot_states[rid]['side'] = target_side
         return False 
+    
+    # Se vai para Home, assume que é seguro
+    if target_side == 'home':
+        return False
 
     # Otimização: Se já está no lado certo E não envolve o estojo, pode pular.
-    # (Sempre forçamos staging se envolver estojo para garantir altura)
     if current_side == target_side and current_side != 'estojo' and target_side != 'estojo':
         return False
     
-    print(f"↷ [R{rid}][Transição] {current_side} → {target_side}")
-    
-    # --- LÓGICA DE SELEÇÃO ---
-    if target_side == 'dir':
-        # Vai para Direita
-        juntas_alvo = list(cfg['STAGING_DIR'])
-        print(f"[R{rid}] Usando Staging DIREITA")
-        
-    elif target_side == 'esq' or target_side == 'estojo':
-        # MUDANÇA AQUI: Se for Esquerda OU Estojo -> Usa Staging ESQ (Retraído)
-        juntas_alvo = list(cfg['STAGING_ESQ'])
-        print(f"[R{rid}] Usando Staging ESQUERDA (Para Alvo: {target_side})")
-    
+    if target_side == 'estojo':
+        real_target = cfg["LADO_ESTOJO"]
     else:
-        # Fallback (não deve acontecer)
-        juntas_alvo = list(cfg['STAGING_ESQ'])
+        real_target = target_side
+
+    print(f"↷ [R{rid}][Transição] {current_side} → {target_side} (Via {real_target})")
+    
+    # Seleciona Staging
+    if real_target == 'est':
+        juntas_alvo = list(cfg['STAGING_EST'])
+    else: # 'ret' ou fallback
+        juntas_alvo = list(cfg['STAGING_RET'])
     
     _exec_move_joint_sync(ec, juntas_alvo, STAGING_SPEED, ACCEL_PTP)
     robot_states[rid]['side'] = target_side
@@ -481,7 +485,7 @@ def habilitar_servos_endpoint(rid: int = Query(..., ge=1, le=2)):
 
             if success: 
                 print(f"[BRIDGE] Servos Robô {rid} habilitados.")
-                time.sleep(0.5) 
+                time.sleep(0.2) 
                 return {"ok": True, "result": "Servos habilitados."}
             else:
                  return {"ok": False, "result": "Falha (SDK retornou False)."}
@@ -500,7 +504,7 @@ def set_servo_endpoint(on: bool, rid: int = Query(..., ge=1, le=2)):
         try:
             resp = ec.set_servo_status(0) 
             if resp.success:
-                 print(f"[BRIDGE] Comando {action_str} enviado. Aguardando..."); time.sleep(0.5)
+                 print(f"[BRIDGE] Comando {action_str} enviado. Aguardando..."); time.sleep(0.2)
                  current_servo_status = ec.servo_status.result
                  if not current_servo_status: print(f"[BRIDGE] Servo Robô {rid} confirmado desligado."); return {"ok": True, "result": "Servo desligado."}
                  else: print(f"[BRIDGE][WARN] Servo Robô {rid} não confirmou desligado."); return {"ok": False, "result": "Falha confirmação servo desligado."}
@@ -820,6 +824,12 @@ def dashboard_ui():
         .highlight-green { box-shadow: inset 0 0 20px 5px #00ff00; border: 3px solid #ccffcc !important; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { box-shadow: inset 0 0 5px 2px #00ff00; } 50% { box-shadow: inset 0 0 25px 10px #00ff00; } 100% { box-shadow: inset 0 0 5px 2px #00ff00; } }
 
+        .winner-mode {
+            color: #ffd700 !important; /* Dourado */
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+            animation: flashWinner 1s infinite alternate;
+        }
+        @keyframes flashWinner { from { opacity: 1; } to { opacity: 0.7; } }
     </style>
 </head>
 <body>
@@ -889,6 +899,14 @@ def dashboard_ui():
                 // Status
                 document.getElementById('status-player').innerText = d.jogador;
                 document.getElementById('status-action').innerText = d.acao;
+
+                const statusEl = document.getElementById('status-player');
+                if (d.jogador && d.jogador.includes("VENCEDOR")) {
+                    statusEl.classList.add("winner-mode");
+                } else {
+                    statusEl.classList.remove("winner-mode");
+                }
+
                 document.getElementById('s-black').innerText = d.placar.Pretas;
                 document.getElementById('s-white').innerText = d.placar.Brancas;
 
@@ -1112,6 +1130,64 @@ def macro_virar_casa(
     return {"ok": True, "message": f"R{rid} - Macro Virar Casa concluída."}
 
 
+@app.post("/macro/vitoria", dependencies=[Depends(require_token)])
+def macro_vitoria(rid: int = Query(..., ge=1, le=2)):
+    """
+    Executa a Dancinha da Vitória:
+    1. Levanta (J2+40, J3+20)
+    2. Samba (J1 +/- 20 graus)
+    3. Volta para Home
+    """
+    ec = ensure_robot(rid)
+    slot = robots[rid]
+    
+    check_other_robot_is_stopped(rid)
+
+    DANCE_SPEED = 60 
+    DANCE_ACCEL = 70
+    WIGGLE_COUNT = 3 
+    
+    with slot.command_lock:
+        print(f"[BRIDGE] R{rid} INICIANDO DANCINHA DA VITÓRIA! 🕺")
+        try:
+            # 1. Preparar Posição Inicial (Baseada no HOME)
+            home_j = list(HOME_POSITION_JOINTS[:6]) 
+            
+            # 2. Pose "Levantar Braços" (Comemorar)
+            cheer_pose = list(home_j)
+            cheer_pose[1] += 20.0  # J2: Levanta o ombro
+            cheer_pose[2] -= 5.0  # J3: Ajusta o cotovelo
+            cheer_pose[3] -= 35.0   # J4: Ajusta o pulso
+            
+            # Executa movimento de subida
+            if not _exec_move_joint_sync(ec, cheer_pose, DANCE_SPEED, DANCE_ACCEL):
+                raise RuntimeError("Falha ao subir para comemorar")
+
+            # 3. O "Samba" (Oscilação de J1)
+            center_j1 = cheer_pose[0]
+            left_j1 = center_j1 + 20.0
+            right_j1 = center_j1 - 20.0
+            
+            for i in range(WIGGLE_COUNT):
+                # Vai para a esquerda
+                cheer_pose[0] = left_j1
+                _exec_move_joint_sync(ec, cheer_pose, DANCE_SPEED + 20, DANCE_ACCEL + 20)
+                
+                # Vai para a direita
+                cheer_pose[0] = right_j1
+                _exec_move_joint_sync(ec, cheer_pose, DANCE_SPEED + 20, DANCE_ACCEL + 20)
+
+            # 4. Retornar ao Home Elegantemente
+            print(f"[BRIDGE] R{rid} Fim da dança. Voltando para Home.")
+            _exec_move_joint_sync(ec, home_j, HOME_SPEED, ACCEL_PTP)
+            
+            return {"ok": True, "message": "Dança executada com sucesso!"}
+
+        except Exception as e:
+            print(f"[BRIDGE][ERR] Falha na dança R{rid}: {e}")
+            traceback.print_exc()
+            return {"ok": False, "error": str(e)}
+        
 # === NOVO ENDPOINT: SUPER-MACRO DE LANCE COMPLETO ===
 
 @app.post("/macro/executar_lance_completo", dependencies=[Depends(require_token)])
@@ -1201,13 +1277,13 @@ def macro_executar_lance_completo(
                     ordem = [tuple(ij) for lst in capturas_por_direcao for ij in lst]
                 else:
                     modo = "quadrante_primeiro"
-                    baldes: Dict[str, List[Tuple[int, int]]] = {"esq": [], "dir": []}
+                    baldes: Dict[str, List[Tuple[int, int]]] = {"ret": [], "est": []}
                     for ij_log in alvos:
                         ij_log_tuple = tuple(ij_log)
                         i_phys_flip, j_phys_flip = get_physical_coords(rid, *ij_log_tuple)
                         baldes[get_target_side(rid, i_phys_flip, j_phys_flip)].append(ij_log_tuple)
                     
-                    ordem_lados = [q0] + [q for q in ["esq", "dir"] if q != q0]
+                    ordem_lados = [q0] + [q for q in ["ret", "est"] if q != q0]
                     ordem = []
                     for q in ordem_lados:
                         ordem += sorted(baldes[q], key=lambda ij: (ij[0], ij[1]))

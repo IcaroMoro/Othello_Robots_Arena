@@ -11,10 +11,10 @@ global_board_state = None
 
 # --- CONFIGURAÇÃO VISÃO ---
 rois_rects = [
-    [399, 127, 25, 25],   
-    [840, 123, 25, 25],  
-    [938, 558, 25, 25],  
-    [292, 563, 25, 25]    
+    [400, 107, 25, 25],   
+    [842, 110, 25, 25],  
+    [928, 545, 25, 25],  
+    [292, 537, 25, 25]    
 ]
 
 selected_roi_index = None
@@ -143,7 +143,7 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
 cv2.namedWindow("Ajustes")
-cv2.createTrackbar("Divisor Preto/Branco", "Ajustes", 100, 255, nothing)
+cv2.createTrackbar("Divisor Preto/Branco", "Ajustes", 120, 255, nothing)
 cv2.createTrackbar("Sensibilidade (Hough)", "Ajustes", 30, 100, nothing)
 cv2.createTrackbar("Raio Min Peca", "Ajustes", 35, 50, nothing)
 cv2.createTrackbar("Raio Max Peca", "Ajustes", 45, 60, nothing)
